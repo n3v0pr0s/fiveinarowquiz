@@ -1,0 +1,15 @@
+node_modules/
+*.tar.gz
+*.tgz
+*.log
+.DS_Store
+Thumbs.db
+.openai/
+.codex/
+.env
+.env.*
+!.env.example
+preview*.png
+/.internal/
+/UX-REVIEW.md
+/data/DOTA-AUDIT.md

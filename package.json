@@ -1,0 +1,13 @@
+{
+  "name": "quizrow",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "prestart": "npm run version:sync",
+    "start": "node server.mjs",
+    "test": "node --test tests/*.test.mjs",
+    "version:sync": "node scripts/version.mjs sync",
+    "release": "node scripts/version.mjs"
+  }
+}

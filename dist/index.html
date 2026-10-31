@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#0e1117"><meta name="description" content="Пять в ряд с викториной Dota 2. Игра вдвоём или против бота.">
+  <title>QuizRow — пять в ряд</title>
+  <meta name="application-version" content="0.1.0">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="dark.css">
+</head>
+<body>
+  <header class="header"><div class="brand-lockup"><a class="brand" href="./" aria-label="QuizRow — главная">QuizRow<span class="brand-dot"></span></a><span id="game-version" class="game-version" title="Версия игры">v0.1.0</span></div><div class="header-actions"><div class="volume-control" role="group" aria-label="Музыка"><button id="music-toggle" type="button" aria-label="Выключить звук" title="Выключить звук" aria-pressed="false"></button><input id="music-volume" type="range" min="0" max="100" value="5" aria-label="Громкость музыки"><output id="music-volume-value" for="music-volume">5%</output></div><button class="button quiet" id="rules-button">Правила</button></div></header>
+  <audio id="music-audio" src="assets/ti-draft-drums.mp3" loop preload="metadata" hidden></audio>
+  <span id="music-status" class="sr-only" role="status"></span>
+  <main id="menu-screen" class="menu-screen" aria-label="Главное меню">
+    <section class="panel" id="setup-panel">
+      <h1 id="menu-title" tabindex="-1">Новая игра</h1>
+      <form id="setup-form">
+        <fieldset><legend>Режим</legend><div class="mode-options"><label><input type="radio" name="mode" value="human" checked><span>Вдвоём</span></label><label><input type="radio" name="mode" value="bot"><span>С ботом</span></label></div><p class="mode-hint hidden" id="mode-hint"></p></fieldset>
+        <fieldset><legend>Тема</legend><div class="themes"><label class="theme selected"><input type="radio" name="theme" value="dota" checked><strong>Dota 2</strong><span class="theme-check">✓</span></label><div class="theme disabled" aria-disabled="true"><strong>Футбол</strong><small>Скоро</small></div></div></fieldset>
+        <fieldset><legend>Кто играет?</legend><div class="name-fields"><label><span class="input-symbol x">×</span><input id="input-0" maxlength="22" placeholder="Игрок 1" aria-label="Имя первого игрока" autocomplete="off"></label><label><span class="input-symbol o">○</span><input id="input-1" maxlength="22" placeholder="Игрок 2" aria-label="Имя второго игрока" autocomplete="off"></label></div></fieldset>
+        <button class="button primary start-button" type="submit">Начать игру</button>
+      </form>
+    </section>
+  </main>
+  <main id="play-screen" class="hidden" aria-label="Игра">
+    <div class="workspace">
+      <section id="bans-desktop" class="bans-desktop detail-panel hidden" aria-label="Использованные герои">
+        <div class="bans-heading"><h2>Баны</h2><span id="used-count-desktop" class="pill">0</span></div>
+        <div id="used-heroes-desktop" class="used-heroes"></div>
+      </section>
+      <section class="arena" aria-label="Игровое поле">
+        <div class="play-toolbar"><button class="button quiet" id="menu-button">← В меню</button><span id="play-hint" role="status">Выберите клетку</span></div>
+        <div class="players"><div class="player" id="player-0"><span class="symbol x">×</span><strong id="name-0">Игрок 1</strong><span class="turn-tag">Ход</span></div><div class="player" id="player-1"><span class="symbol o">○</span><strong id="name-1">Игрок 2</strong><span class="turn-tag">Ход</span></div></div>
+        <div class="board-shell"><div class="board" id="board" role="group" aria-label="Поле 30 на 30"></div><div class="board-overlay" id="board-overlay"><span>Начните игру</span></div></div>
+        <div class="board-footer"><span id="board-status" role="status">Ожидание игры</span></div>
+      </section>
+    </div>
+    <section id="match-details" class="match-details hidden"><details class="detail-panel bans-mobile"><summary>Баны <span id="used-count" class="pill">0</span></summary><div id="used-heroes" class="used-heroes"></div></details><details class="detail-panel"><summary>История ходов</summary><ol id="history" class="history"></ol></details></section>
+  </main>
+  <main id="finish-screen" class="finish-screen hidden" aria-label="Итоги игры"><section class="panel" id="game-panel"></section></main>
+  <dialog id="quiz-dialog" class="quiz-dialog" aria-labelledby="quiz-title"><div id="quiz-content"></div></dialog>
+  <dialog id="rules-dialog">
+    <button class="dialog-close" data-close aria-label="Закрыть правила">×</button>
+    <h2>Правила</h2>
+    <ol class="rules-list">
+      <li>Играйте вдвоём за одним экраном или против бота. Крестики начинают. Цель — поставить пять или больше своих знаков подряд в любом направлении на поле 30×30.</li>
+      <li>Нажмите на свободную клетку. В модальном окне появится вопрос и запустится таймер на 25 секунд. Получите два случайных признака героя Dota 2: роль + атрибут, цвет + роль или цвет + атрибут.</li>
+      <li>До конца таймера впишите английское имя или выберите героя из списка. Подойдёт любой ещё не названный герой, соответствующий обоим признакам. Русские псевдонимы поддерживаются для части героев.</li>
+      <li>Верный ответ автоматически ставит ваш символ в выбранную клетку. Ошибка, повтор героя или истечение времени оставляют клетку пустой и передают ход сопернику. Каждый распознанный и отправленный герой выбывает до конца партии, даже при неверном ответе.</li>
+      <li>Результат ответа показывается одну секунду, затем ход переходит автоматически. Пока игрок выбирает клетку, таймер не идёт. Выбранную клетку нельзя поменять во время ответа. Следующий вопрос начинается, когда следующий игрок выбирает свою клетку.</li>
+      <li>Атрибуты и роли из OpenDota сверены с данными Valve. Роль — категория вроде «Керри» или «Поддержка», а не позиция 1–5.</li>
+      <li>Цвет относится к заметной части стандартного облика без косметики. Допустимые цвета: красный, синий, зелёный, фиолетовый, жёлтый, белый и коричневый. «Тёмный» и «золотой» не используются. У героя может быть несколько подходящих цветов; цветовая разметка остаётся условной.</li>
+      <li>Цветовые подсказки генерируются только по явно выраженным цветам. Для неоднозначных обликов используются роль и атрибут, но такие герои тоже могут быть верным ответом на подходящий цветовой вопрос.</li>
+      <li>Если поле заполнено или герои закончились, объявляется ничья. Прогресс действует только на открытой странице. Перезагрузка или закрытие страницы сбрасывает партию. При переключении на другую вкладку таймер вопроса продолжает идти.</li>
+    </ol>
+    <a class="source-link" href="https://github.com/odota/dotaconstants/blob/master/build/heroes.json" target="_blank" rel="noopener">Справочник героев OpenDota ↗</a>
+    <button class="button primary" data-close>Всё понятно</button>
+  </dialog>
+  <dialog id="reset-dialog"><h2>Выйти в главное меню?</h2><p class="muted">Текущая партия будет завершена.</p><div class="dialog-actions"><button class="button quiet" data-cancel>Продолжить игру</button><button class="button primary" id="confirm-reset">В меню</button></div></dialog>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
