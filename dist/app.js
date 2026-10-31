@@ -282,15 +282,25 @@ $('#board').addEventListener('click',event=>{
 });
 $('#setup-form').addEventListener('submit',event=>{
   event.preventDefault();
-  if(new FormData(event.target).get('mode')!=='bot'){void enterRoom('create');return;}
+  if(new FormData(event.target).get('mode')!=='bot'){void enterRoom(invitedRoomCode()?'join':'create');return;}
   state=newGame({names:[$('#input-0').value.trim()||'Игрок','Бот'],mode:'bot',seconds:ANSWER_SECONDS,heroCount:heroes.length,theme:'dota'});
   startMatchMusic();
   render();
 });
+function invitedRoomCode() {
+  const code=new URLSearchParams(location.search).get('room');
+  return code&&/^[A-Z2-9]{6}$/i.test(code)?code.toUpperCase():null;
+}
 function updateMode() {
   const bot = $('[name="mode"]:checked').value === 'bot';
+  const joining = !bot&&Boolean(invitedRoomCode());
   $('#network-options').classList.toggle('hidden',bot);
+  $('#start-button').classList.toggle('hidden',joining);
   $('#start-button').textContent=bot?'Начать игру':'Создать комнату';
+  $('#network-options>label').textContent=joining?'Код комнаты':'Или войдите по коду';
+  $('#join-room').textContent=joining?'Подключиться':'Войти';
+  $('#join-room').classList.toggle('primary',joining);
+  $('#join-room').classList.toggle('quiet',!joining);
   $('#menu-error').textContent='';
 }
 document.querySelectorAll('[name="mode"]').forEach(radio=>radio.addEventListener('change',updateMode));
@@ -327,6 +337,6 @@ document.addEventListener('visibilitychange',()=>{expire();updateTimer();});
 window.addEventListener('pageshow',event=>{if(event.persisted&&network)returnToMenu();else expire();});
 window.addEventListener('pagehide',()=>network?.leave());
 setInterval(()=>{expire();updateTimer();},100);
-const invitedRoom=new URLSearchParams(location.search).get('room');
-if(invitedRoom&&/^[A-Z2-9]{6}$/i.test(invitedRoom))$('#room-code').value=invitedRoom.toUpperCase();
+const invitedRoom=invitedRoomCode();
+if(invitedRoom)$('#room-code').value=invitedRoom;
 updateMode();render();
