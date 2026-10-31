@@ -4,6 +4,7 @@ import { isBotTurn, chooseBotCell, botAnswer } from './bot.js';
 import { SIZE, ROLES, ATTRS, COLORS, newGame, normalize } from './engine.js';
 import { ANSWER_SECONDS, resultRemaining, openQuestion, changeQuestionCell, answerQuestion, endQuestion, acknowledgeResult } from './turn-flow.js';
 import { RoomClient } from './network.js';
+import { readPlayerName, savePlayerName } from './player-name.js';
 const $ = selector => document.querySelector(selector);
 // A match lives only in this page's memory; a reload starts at the menu.
 let state = null;
@@ -23,6 +24,9 @@ const escape = text => String(text).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'
 const playerName = () => state.settings.names[state.player];
 const symbol = player => player === 0 ? '×' : '○';
 const gameNow = () => network && roomView?.pausedAt != null ? roomView.pausedAt : network&&disconnectedClock!==null?disconnectedClock:Date.now() + (network ? clockOffset : 0);
+const enteredPlayerName = () => {
+  const name=$('#input-0').value.trim();savePlayerName(name);return name||'Игрок';
+};
 const canMove = () => Boolean((state?.phase==='ready'||(state?.phase==='quiz'&&changingCell))&&!state.result&&!isBotTurn(state)&&!actionBusy&&(!network||(connection==='connected'&&roomView?.pausedAt===null&&state.player===roomView.you)));
 function applyRoom(snapshot) {
   const previous=state;
@@ -43,7 +47,7 @@ async function enterRoom(type) {
   menuBusy=true;$('#menu-error').textContent='';renderNetwork();
   const client=new RoomClient({onState:snapshot=>{if(network===client)applyRoom(snapshot);},onConnection:status=>{if(network===client){if(status!=='connected'&&disconnectedClock===null)disconnectedClock=Date.now()+clockOffset;if(status==='connected')disconnectedClock=null;connection=status;render();}}});
   try {
-    const snapshot=await client.enter(type,$('#input-0').value.trim()||'Игрок',code);
+    const snapshot=await client.enter(type,enteredPlayerName(),code);
     network=client;connection='connecting';disconnectedClock=null;client.receive(snapshot);client.connect();
   } catch(error) { $('#menu-error').textContent=error.name==='TimeoutError'?'Сервер не отвечает. Попробуйте ещё раз.':error.message; }
   finally {menuBusy=false;renderNetwork();}
@@ -317,7 +321,7 @@ $('#board').addEventListener('click',event=>{
 $('#setup-form').addEventListener('submit',event=>{
   event.preventDefault();
   if(new FormData(event.target).get('mode')!=='bot'){void enterRoom(invitedRoomCode()?'join':'create');return;}
-  state=newGame({names:[$('#input-0').value.trim()||'Игрок','Бот'],mode:'bot',seconds:ANSWER_SECONDS,heroCount:heroes.length,theme:'dota'});
+  state=newGame({names:[enteredPlayerName(),'Бот'],mode:'bot',seconds:ANSWER_SECONDS,heroCount:heroes.length,theme:'dota'});
   startMatchMusic();
   render();
 });
@@ -373,4 +377,6 @@ window.addEventListener('pagehide',()=>network?.leave());
 setInterval(()=>{expire();updateTimer();},100);
 const invitedRoom=invitedRoomCode();
 if(invitedRoom)$('#room-code').value=invitedRoom;
+$('#input-0').value=readPlayerName();
+for(const event of ['input','change'])$('#input-0').addEventListener(event,()=>savePlayerName($('#input-0').value));
 updateMode();render();
