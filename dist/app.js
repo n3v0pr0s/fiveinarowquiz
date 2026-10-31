@@ -3,6 +3,7 @@ import { startMatchMusic, stopMatchMusic, fadeOutMatchMusic } from './music.js';
 import { isBotTurn, chooseBotCell, botAnswer } from './bot.js';
 import { SIZE, ROLES, ATTRS, COLORS, newGame, normalize } from './engine.js';
 import { ANSWER_SECONDS, resultRemaining, openQuestion, answerQuestion, endQuestion, acknowledgeResult } from './turn-flow.js';
+import { RoomClient } from './network.js';
 const $ = selector => document.querySelector(selector);
 // A match lives only in this page's memory; a reload starts at the menu.
 let state = null;
@@ -11,18 +12,77 @@ let errorMessage = '';
 let botTimer = null;
 let resultTimer = null;
 let renderedScreen = null;
+let network = null, roomView = null, connection = 'connecting', clockOffset = 0;
+let disconnectedClock = null;
+let actionBusy = false, menuBusy = false, networkError = '', questionKey = null;
 const boardCenter=Math.floor((SIZE-1)/2);
 let boardFocusIndex = boardCenter*(SIZE+1);
 let centeredBoard = null;
 const escape = text => String(text).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const playerName = () => state.settings.names[state.player];
 const symbol = player => player === 0 ? '×' : '○';
+const gameNow = () => network && roomView?.pausedAt != null ? roomView.pausedAt : network&&disconnectedClock!==null?disconnectedClock:Date.now() + (network ? clockOffset : 0);
+const canMove = () => Boolean(state?.phase==='ready'&&!state.result&&!isBotTurn(state)&&!actionBusy&&(!network||(connection==='connected'&&roomView?.pausedAt===null&&state.player===roomView.you)));
+function applyRoom(snapshot) {
+  const previous=state;
+  roomView=snapshot;clockOffset=snapshot.serverNow-Date.now();networkError='';
+  const next=snapshot.status==='active'?snapshot.state:null;
+  if(next&&previous?.matchId===next.matchId) {
+    next.board.forEach((mark,i)=>previous.board[i]=mark);next.board=previous.board;
+  }
+  state=next;
+  if(state&&state.matchId!==previous?.matchId&&state.phase!=='finished') startMatchMusic();
+  render();
+  if(previous?.result&&!state?.result&&canMove()) requestAnimationFrame(()=>$(`[data-cell="${boardFocusIndex}"]`)?.focus({preventScroll:true}));
+}
+async function enterRoom(type) {
+  if(menuBusy)return;
+  const code=$('#room-code').value.trim().toUpperCase();
+  if(type==='join'&&!/^[A-Z2-9]{6}$/.test(code)) { $('#menu-error').textContent='Введите код из 6 символов.';return; }
+  menuBusy=true;$('#menu-error').textContent='';renderNetwork();
+  const client=new RoomClient({onState:snapshot=>{if(network===client)applyRoom(snapshot);},onConnection:status=>{if(network===client){if(status!=='connected'&&disconnectedClock===null)disconnectedClock=Date.now()+clockOffset;if(status==='connected')disconnectedClock=null;connection=status;render();}}});
+  try {
+    const snapshot=await client.enter(type,$('#input-0').value.trim()||'Игрок',code);
+    network=client;connection='connecting';disconnectedClock=null;client.receive(snapshot);client.connect();
+  } catch(error) { $('#menu-error').textContent=error.name==='TimeoutError'?'Сервер не отвечает. Попробуйте ещё раз.':error.message; }
+  finally {menuBusy=false;renderNetwork();}
+}
+async function networkAction(type,fields={}) {
+  if(!network||actionBusy||connection!=='connected')return;
+  const client=network;actionBusy=true;networkError='';render();
+  try {
+    const response=await client.act(type,{matchId:state?.matchId,turn:state?.turn,...fields});
+    if(network!==client)return;
+    if(response.answerStatus==='unknown'&&$('#input-error')) $('#input-error').textContent='Выберите героя из списка или проверьте имя.';
+  } catch(error) {if(network===client){networkError=error.message;if(type==='start'&&!state)stopMatchMusic();}}
+  finally {if(network===client){actionBusy=false;render();}}
+}
+function renderNetwork() {
+  for(const el of document.querySelectorAll('#setup-form input,#setup-form button')) el.disabled=menuBusy;
+  const status=$('#connection-status');
+  const message=network&&roomView?.status!=='closed'?(connection!=='connected'?'Соединение потеряно. Переподключаемся…':roomView?.pausedAt!==null?'Соперник отключился. Ждём возвращения…':networkError):'';
+  status.textContent=message||'';status.classList.toggle('hidden',!message);
+  $('#current-room').classList.toggle('hidden',!network);$('#current-room').textContent=network?roomView?.code||'':'';
+  for(const el of document.querySelectorAll('#answer-form button,#skip-button')) el.disabled=Boolean(network&&(actionBusy||connection!=='connected'||roomView?.pausedAt!==null));
+  if(!network||!roomView)return;
+  $('#lobby-code').textContent=roomView.code;
+  $('#lobby-players').innerHTML=roomView.players.map((p,i)=>`<div class="lobby-player"><span class="symbol ${i===0?'x':'o'}">${symbol(i)}</span><strong>${p?escape(p.name):'Ждём друга'}</strong><small>${p?(i===roomView.you?'Вы':p.connected?'Подключён':'Не в сети'):''}</small></div>`).join('');
+  const invite=new URL(location.href);invite.search='';invite.hash='';invite.searchParams.set('room',roomView.code);$('#invite-link').value=invite.href;
+  $('#local-room-note').classList.toggle('hidden',!['localhost','127.0.0.1','[::1]'].includes(location.hostname));
+  const closed=roomView.status==='closed',ready=roomView.players.every(p=>p?.connected)&&connection==='connected';
+  $('#start-room').classList.toggle('hidden',closed||roomView.you!==0);
+  $('#start-room').disabled=!ready||actionBusy;
+  $('#copy-invite').disabled=closed;
+  $('#room-status').textContent=closed?roomView.reason:connection!=='connected'?'Подключаемся…':!roomView.players[1]?'Ожидаем друга':!ready?'Ожидаем подключения игроков':roomView.you===0?'Друг подключился. Можно начинать.':'Создатель комнаты начинает игру.';
+  $('#room-error').textContent=networkError;
+}
 function expire() {
+  if(network)return;
   if(state?.result && resultRemaining(state)===0) { continueAfterResult(); return; }
   if(state?.phase === 'quiz' && Date.now() >= state.deadline) { endQuestion(state, heroes, 'timeout');  render(); }
 }
 function renderBoard() {
-  const playing = state?.phase === 'ready' && !state.result && !isBotTurn(state);
+  const playing = canMove();
   const board = $('#board');
   if(state&&centeredBoard!==state.board) boardFocusIndex=boardCenter*(SIZE+1);
   if(playing&&state.board[boardFocusIndex]) {
@@ -44,20 +104,25 @@ function renderBoard() {
     requestAnimationFrame(()=>{const shell=$('.board-shell');shell.scrollLeft=(shell.scrollWidth-shell.clientWidth)/2;shell.scrollTop=(shell.scrollHeight-shell.clientHeight)/2;});
   }
   for(let i=0;i<2;i++) {
-    $(`#name-${i}`).textContent = state?.settings.names[i] || `Игрок ${i+1}`;
+    $(`#name-${i}`).textContent = state?state.settings.names[i]+(network&&roomView.you===i?' (вы)':''):`Игрок ${i+1}`;
     $(`#player-${i}`).classList.toggle('active',Boolean(state && state.player===i && state.phase!=='finished'));
   }
   $('#board-status').textContent = !state ? 'Ожидание игры' : state.phase==='finished' ? 'Партия завершена' : state.phase==='quiz' ? `Клетка ${Math.floor(state.pendingCell/SIZE)+1}:${state.pendingCell%SIZE+1} · ход ${state.turn}` : `Ход ${state.turn}`;
-  $('#play-hint').textContent = !state?'':state.result?'':state.phase==='quiz'?`${playerName()} отвечает…`:isBotTurn(state)?'Бот выбирает клетку…':'Выберите клетку';
+  $('#play-hint').textContent = !state?'':state.result?'':state.phase==='quiz'?`${playerName()} отвечает…`:network?(state.player===roomView.you?'Ваш ход':`${playerName()} выбирает клетку`):isBotTurn(state)?'Бот выбирает клетку…':'Выберите клетку';
 }
 function renderGamePanel() {
   let panel = $('#game-panel');
-  if(!state) return;
+  if(!state) {questionKey=null;return;}
+  if(state.phase!=='quiz')questionKey=null;
   const player = `<div class="current-player"><span class="symbol ${state.player===0?'x':'o'}">${symbol(state.player)}</span><strong>${escape(playerName())}</strong><span class="turn-number">Ход ${state.turn}</span></div>`;
   const newButton = `<button class="button quiet new-game" id="new-game">В меню</button>`;
   if(state.phase==='ready') {
     panel.innerHTML = '';
   } else if(state.phase==='quiz') {
+    if(network&&state.player!==roomView.you) {questionKey=null;return;}
+    const key=`${state.matchId||'local'}:${state.turn}:${state.pendingCell}`;
+    if(questionKey===key&&$('#answer-form')) {updateTimer();return;}
+    questionKey=key;
     panel = $('#quiz-content');
     panel.innerHTML = player+`<div class="quiz-heading"><h2 id="quiz-title">Назовите героя</h2><div class="timer" id="timer" role="timer" aria-live="off" aria-label="Осталось секунд"><strong id="seconds">${Math.max(0,Math.ceil((state.deadline-Date.now())/1000))}</strong><small>с</small></div></div><div class="timer-track"><div id="timer-bar"></div></div><div class="traits">${state.question.traits.map(t=>`<div class="trait"><span class="trait-icon ${t.kind==='color'?'swatch '+t.value:''}">${t.kind==='attr'?'✦':t.kind==='role'?'⚑':''}</span><div><small>${t.kind==='role'?'Роль':t.kind==='attr'?'Атрибут':'Цвет'}</small><strong>${escape((t.kind==='role'?ROLES:t.kind==='attr'?ATTRS:COLORS)[t.value])}</strong></div></div>`).join('<span class="trait-plus">+</span>')}</div><form id="answer-form" autocomplete="off"><label class="answer-label" for="hero-input">Герой</label><div class="search-wrap"><input id="hero-input" placeholder="Имя героя" autocomplete="off" spellcheck="false" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="hero-results"><button id="hero-list-toggle" class="list-toggle" type="button" aria-label="Показать список героев">⌄</button><div class="hero-results hidden" id="hero-results" role="listbox" aria-label="Герои Dota 2"></div></div><p class="input-error" id="input-error" role="alert"></p><button type="submit" class="button primary full">Ответить</button></form><button class="button quiet full skip-button" id="skip-button">Пропустить ход</button>`;
     if (isBotTurn(state)) {
@@ -85,12 +150,14 @@ function renderGamePanel() {
     const won=Number.isInteger(state.winner);
     panel.innerHTML=`<div class="finish-icon" aria-hidden="true">${won?symbol(state.winner):'＝'}</div><h2 class="finish-title">${won?`${escape(state.settings.names[state.winner])} побеждает`:'Ничья'}</h2>${won?'':`<p class="muted">${state.winner==='exhausted'?'Все герои использованы.':'Поле заполнено.'}</p>`}<div class="match-stats"><div><strong>${state.board.filter(Boolean).length}</strong><span>ходов</span></div><div><strong>${state.used.length}</strong><span>героев</span></div></div><button class="button primary full" id="rematch">Сыграть ещё</button>`+newButton;
   }
-  $('#answer-form')?.addEventListener('submit',event=>{event.preventDefault();startMatchMusic();const result=answerQuestion(state,heroes,$('#hero-input').value);if(result.status==='unknown'){errorMessage='Выберите героя из списка или проверьте имя.';$('#input-error').textContent=errorMessage;return;}render();});
-  $('#skip-button')?.addEventListener('click',()=>{startMatchMusic();endQuestion(state,heroes,'skip');render();});
+  $('#answer-form')?.addEventListener('submit',event=>{event.preventDefault();startMatchMusic();if(network){void networkAction('answer',{answer:$('#hero-input').value});return;}const result=answerQuestion(state,heroes,$('#hero-input').value);if(result.status==='unknown'){errorMessage='Выберите героя из списка или проверьте имя.';$('#input-error').textContent=errorMessage;return;}render();});
+  $('#skip-button')?.addEventListener('click',()=>{startMatchMusic();if(network){void networkAction('skip');return;}endQuestion(state,heroes,'skip');render();});
   $('#new-game')?.addEventListener('click',returnToMenu);
-  $('#rematch')?.addEventListener('click',()=>{state=newGame(state.settings);startMatchMusic();render();});
+  if(network&&$('#rematch')) {$('#rematch').disabled=roomView.rematchVotes[roomView.you]||actionBusy||connection!=='connected'||roomView.pausedAt!==null;$('#rematch').textContent=roomView.rematchVotes[roomView.you]?'Ждём соперника…':'Сыграть ещё';}
+  $('#rematch')?.addEventListener('click',()=>{if(network){void networkAction('rematch');return;}state=newGame(state.settings);startMatchMusic();render();});
 }
 function continueAfterResult() {
+  if(network)return;
   if(!acknowledgeResult(state)) return;
   render();
   requestAnimationFrame(()=>{
@@ -101,7 +168,7 @@ function continueAfterResult() {
 function renderQuizDialog() {
   clearTimeout(resultTimer);resultTimer=null;
   const dialog=$('#quiz-dialog');
-  if(!state || (state.phase!=='quiz'&&!state.result)) {
+  if(!state || (!state.result&&(state.phase!=='quiz'||(network&&state.player!==roomView.you)))) {
     if(dialog.open) dialog.close();
     $('#quiz-content').innerHTML='';
     return;
@@ -116,7 +183,7 @@ function renderQuizDialog() {
     const next=finished?'Партия завершена':`Следующий ход: ${escape(playerName())}`;
     $('#quiz-content').innerHTML=`<div class="result-view ${correct?'is-correct':'is-incorrect'}"><div class="current-player"><span class="symbol ${result.player===0?'x':'o'}">${symbol(result.player)}</span><strong>${escape(state.settings.names[result.player])}</strong><span class="turn-number">Ход ${result.turn}</span></div><div class="result-icon" aria-hidden="true">${correct?'✓':result.status==='timeout'?'◷':result.status==='skip'?'→':'×'}</div><h2 id="quiz-title" tabindex="-1">${titles[result.status]||'Ход завершён'}</h2><p class="result-traits">${traits}</p><p class="result-explanation">${explanation}</p>${!correct&&result.feedback.example?`<p class="result-example">Подходящий герой: <strong>${escape(result.feedback.example)}</strong></p>`:''}<div class="result-consequence"><strong>${correct?`Символ ${symbol(result.player)} поставлен`:'Клетка осталась пустой'}</strong><span>${next}</span></div><div class="result-progress" aria-hidden="true"><span></span></div></div>`;
     const current=state;
-    resultTimer=setTimeout(()=>{if(state===current&&state.result===result) continueAfterResult();},resultRemaining(state));
+    if(!network)resultTimer=setTimeout(()=>{if(state===current&&state.result===result) continueAfterResult();},resultRemaining(state));
     requestAnimationFrame(()=>$('#quiz-title')?.focus({preventScroll:true}));
   }
   if(!dialog.open) dialog.showModal();
@@ -151,12 +218,14 @@ function renderDetails() {
 }
 function updateTimer() {
   if(state?.phase!=='quiz')return;
-  const left=Math.max(0,state.deadline-Date.now());const seconds=$('#seconds');if(!seconds)return;
+  const left=Math.max(0,state.deadline-gameNow());
+  if(network&&state.player!==roomView.you)$('#play-hint').textContent=`${playerName()} отвечает · ${Math.ceil(left/1000)} с`;
+  const seconds=$('#seconds');if(!seconds)return;
   seconds.textContent=Math.ceil(left/1000);$('#timer').classList.toggle('urgent',left<=5000);$('#timer-bar').style.width=`${Math.min(100,left/(state.settings.seconds*1000)*100)}%`;
 }
 function scheduleBot() {
   clearTimeout(botTimer); botTimer = null;
-  if (!isBotTurn(state) || state.result) return;
+  if (network || !isBotTurn(state) || state.result) return;
   const current = state, turn = state.turn, phase = state.phase;
   botTimer = setTimeout(() => {
     if (state !== current || state.turn !== turn || state.phase !== phase || !isBotTurn(state) || state.result) return;
@@ -174,17 +243,17 @@ function scheduleBot() {
 }
 function render() {
   const phase=state?.phase||'setup';
-  const screen=!state?'menu':phase==='finished'&&!state.result?'finish':'play';
+  const screen=network&&roomView?.status!=='active'?'room':!state?'menu':phase==='finished'&&!state.result?'finish':'play';
   if(phase==='finished') fadeOutMatchMusic();
   else if(phase==='setup') stopMatchMusic();
   document.body.dataset.phase=phase;document.body.dataset.bot=String(isBotTurn(state));
   document.body.dataset.screen=screen;
-  for(const name of ['menu','play','finish']) $(`#${name}-screen`).classList.toggle('hidden',name!==screen);
-  renderBoard();renderGamePanel();renderQuizDialog();renderDetails();scheduleBot();
+  for(const name of ['menu','room','play','finish']) $(`#${name}-screen`).classList.toggle('hidden',name!==screen);
+  renderBoard();renderGamePanel();renderQuizDialog();renderDetails();renderNetwork();scheduleBot();
   if(screen!==renderedScreen) {
     window.scrollTo({top:0,behavior:'instant'});
     requestAnimationFrame(()=>{
-      const target=screen==='menu'?$('#menu-title'):screen==='finish'?$('#rematch'):state.phase==='ready'&&!state.result&&!isBotTurn(state)?$(`[data-cell="${boardFocusIndex}"]`):null;
+      const target=screen==='menu'?$('#menu-title'):screen==='room'?$('#room-screen h1'):screen==='finish'?$('#rematch'):canMove()?$(`[data-cell="${boardFocusIndex}"]`):null;
       target?.focus({preventScroll:true});
     });
   }
@@ -196,7 +265,7 @@ $('#board').addEventListener('focusin',event=>{
   document.querySelectorAll('[data-cell][tabindex="0"]').forEach(el=>el.tabIndex=-1);cell.tabIndex=0;
 });
 $('#board').addEventListener('keydown',event=>{
-  const cell=event.target.closest('[data-cell]');if(!cell||state?.phase!=='ready'||state.result||isBotTurn(state))return;
+  const cell=event.target.closest('[data-cell]');if(!cell||!canMove())return;
   const direction={ArrowUp:[-1,0],ArrowDown:[1,0],ArrowLeft:[0,-1],ArrowRight:[0,1]}[event.key];
   if(!direction)return;event.preventDefault();
   let row=Math.floor(Number(cell.dataset.cell)/SIZE)+direction[0],col=Number(cell.dataset.cell)%SIZE+direction[1];
@@ -205,19 +274,24 @@ $('#board').addEventListener('keydown',event=>{
     row+=direction[0];col+=direction[1];
   }
 });
-$('#board').addEventListener('click',event=>{const cell=event.target.closest('[data-cell]');if(cell&&state&&!state.result&&!isBotTurn(state)&&openQuestion(state,heroes,Number(cell.dataset.cell))){startMatchMusic();render();}});
+$('#board').addEventListener('click',event=>{
+  const cell=event.target.closest('[data-cell]');if(!cell||!canMove())return;
+  startMatchMusic();
+  if(network){void networkAction('select',{cell:Number(cell.dataset.cell)});return;}
+  if(openQuestion(state,heroes,Number(cell.dataset.cell)))render();
+});
 $('#setup-form').addEventListener('submit',event=>{
   event.preventDefault();
-  const mode=new FormData(event.target).get('mode')==='bot'?'bot':'human';
-  state=newGame({names:[$('#input-0').value.trim()||'Игрок 1',mode==='bot'?'Бот':$('#input-1').value.trim()||'Игрок 2'],mode,seconds:ANSWER_SECONDS,heroCount:heroes.length,theme:'dota'});
+  if(new FormData(event.target).get('mode')!=='bot'){void enterRoom('create');return;}
+  state=newGame({names:[$('#input-0').value.trim()||'Игрок','Бот'],mode:'bot',seconds:ANSWER_SECONDS,heroCount:heroes.length,theme:'dota'});
   startMatchMusic();
   render();
 });
 function updateMode() {
   const bot = $('[name="mode"]:checked').value === 'bot';
-  $('#input-1').disabled = bot;
-  $('#input-1').placeholder = bot ? 'Бот' : 'Игрок 2';
-  $('#mode-hint').textContent = bot ? 'Вы — ×, бот — ○. Бот отвечает верно и ходит автоматически.' : 'Два игрока за одним экраном.';
+  $('#network-options').classList.toggle('hidden',bot);
+  $('#start-button').textContent=bot?'Начать игру':'Создать комнату';
+  $('#menu-error').textContent='';
 }
 document.querySelectorAll('[name="mode"]').forEach(radio=>radio.addEventListener('change',updateMode));
 $('#rules-button').addEventListener('click',()=>$('#rules-dialog').showModal());
@@ -225,17 +299,34 @@ document.querySelectorAll('[data-close]').forEach(button=>button.addEventListene
 $('[data-cancel]').addEventListener('click',()=>$('#reset-dialog').close());
 function returnToMenu() {
   if(state){
-    $('#input-0').value=state.settings.names[0];
-    if(state.settings.mode!=='bot') $('#input-1').value=state.settings.names[1];
-    $(`[name="mode"][value="${state.settings.mode==='bot'?'bot':'human'}"]`).checked=true;
+    $('#input-0').value=state.settings.names[network?roomView.you:0];
+    $(`[name="mode"][value="${state.settings.mode==='bot'?'bot':'network'}"]`).checked=true;
   }
-  state=null;$('#reset-dialog').close();updateMode();render();
+  const previous=network;network=null;roomView=null;actionBusy=false;networkError='';questionKey=null;disconnectedClock=null;
+  previous?.leave();state=null;$('#reset-dialog').close();history.replaceState(null,'',location.pathname);updateMode();render();
 }
 $('#confirm-reset').addEventListener('click',returnToMenu);
-$('#menu-button').addEventListener('click',()=>$('#reset-dialog').showModal());
-$('.brand').addEventListener('click',event=>{event.preventDefault();if(state?.phase==='finished') returnToMenu();else if(state) $('#reset-dialog').showModal();});
+function requestMenu() {
+  if(!state||state.phase==='finished'){returnToMenu();return;}
+  $('#reset-dialog .muted').textContent=network?'Выход завершит партию для обоих игроков.':'Текущая партия будет завершена.';
+  $('#reset-dialog').showModal();
+}
+$('#menu-button').addEventListener('click',requestMenu);
+$('.brand').addEventListener('click',event=>{event.preventDefault();if(state||network)requestMenu();});
+$('#leave-room').addEventListener('click',returnToMenu);
+$('#join-room').addEventListener('click',()=>void enterRoom('join'));
+$('#start-room').addEventListener('click',()=>{startMatchMusic();void networkAction('start');});
+$('#room-code').addEventListener('input',event=>{event.target.value=event.target.value.toUpperCase().replace(/[^A-Z2-9]/g,'');});
+$('#room-code').addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();void enterRoom('join');}});
+$('#copy-invite').addEventListener('click',async()=>{
+  try {await navigator.clipboard.writeText($('#invite-link').value);$('#room-status').textContent='Ссылка скопирована';}
+  catch {$('#invite-link').focus();$('#invite-link').select();$('#room-status').textContent='Скопируйте выделенную ссылку';}
+});
 document.addEventListener('click',event=>{if(!event.target.closest('.search-wrap'))closeResults();});
 document.addEventListener('visibilitychange',()=>{expire();updateTimer();});
-window.addEventListener('pageshow',expire);
+window.addEventListener('pageshow',event=>{if(event.persisted&&network)returnToMenu();else expire();});
+window.addEventListener('pagehide',()=>network?.leave());
 setInterval(()=>{expire();updateTimer();},100);
+const invitedRoom=new URLSearchParams(location.search).get('room');
+if(invitedRoom&&/^[A-Z2-9]{6}$/i.test(invitedRoom))$('#room-code').value=invitedRoom.toUpperCase();
 updateMode();render();
