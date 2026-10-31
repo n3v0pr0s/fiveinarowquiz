@@ -1,7 +1,7 @@
 import { randomBytes, randomInt } from 'node:crypto';
 import { heroes as defaultHeroes } from '../dist/heroes.js';
 import { newGame } from '../dist/engine.js';
-import { ANSWER_SECONDS, openQuestion, answerQuestion, endQuestion, acknowledgeResult } from '../dist/turn-flow.js';
+import { ANSWER_SECONDS, openQuestion, changeQuestionCell, answerQuestion, endQuestion, acknowledgeResult } from '../dist/turn-flow.js';
 
 export class RoomError extends Error {
   constructor(status, message) { super(message);this.status = status; }
@@ -109,6 +109,8 @@ export class RoomService {
     let answerStatus;
     if (command.type === 'select') {
       if (!openQuestion(state, this.heroes, command.cell, this.now(), this.random)) fail(409, 'Выберите свободную клетку в свой ход.');
+    } else if (command.type === 'retarget') {
+      if (!changeQuestionCell(state, this.heroes, command.cell, this.now())) fail(409, 'Выберите свободную клетку до конца вопроса.');
     } else if (command.type === 'answer') {
       if (typeof command.answer !== 'string' || command.answer.length > 100) fail(400, 'Проверьте имя героя.');
       if (state.phase !== 'quiz') fail(409, 'Сначала выберите клетку.');

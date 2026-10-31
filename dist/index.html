@@ -4,11 +4,11 @@
   <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#0e1117"><meta name="description" content="Пять в ряд с викториной Dota 2. Игра вдвоём или против бота.">
   <title>QuizRow — пять в ряд</title>
-  <meta name="application-version" content="0.2.1">
+  <meta name="application-version" content="0.3.1">
   <link rel="icon" href="favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="dark.css">
 </head>
 <body>
-  <header class="header"><div class="brand-lockup"><a class="brand" href="./" aria-label="QuizRow — главная">QuizRow<span class="brand-dot"></span></a><span id="game-version" class="game-version" title="Версия игры">v0.2.1</span></div><div class="header-actions"><div class="volume-control" role="group" aria-label="Музыка"><button id="music-toggle" type="button" aria-label="Выключить звук" title="Выключить звук" aria-pressed="false"></button><input id="music-volume" type="range" min="0" max="100" value="5" aria-label="Громкость музыки"><output id="music-volume-value" for="music-volume">5%</output></div><button class="button quiet" id="rules-button">Правила</button></div></header>
+  <header class="header"><div class="brand-lockup"><a class="brand" href="./" aria-label="QuizRow — главная">QuizRow<span class="brand-dot"></span></a><span id="game-version" class="game-version" title="Версия игры">v0.3.1</span></div><div class="header-actions"><div class="volume-control" role="group" aria-label="Музыка"><button id="music-toggle" type="button" aria-label="Выключить звук" title="Выключить звук" aria-pressed="false"></button><input id="music-volume" type="range" min="0" max="100" value="5" aria-label="Громкость музыки"><output id="music-volume-value" for="music-volume">5%</output></div><button class="button quiet" id="rules-button">Правила</button></div></header>
   <audio id="music-audio" src="assets/ti-draft-drums.mp3" loop preload="metadata" hidden></audio>
   <span id="music-status" class="sr-only" role="status"></span>
   <p id="connection-status" class="connection-status hidden" role="status"></p>
@@ -42,6 +42,7 @@
       <section class="arena" aria-label="Игровое поле">
         <div class="play-toolbar"><button class="button quiet" id="menu-button">← В меню</button><span id="current-room" class="pill hidden"></span><span id="play-hint" role="status">Выберите клетку</span></div>
         <div class="players"><div class="player" id="player-0"><span class="symbol x">×</span><strong id="name-0">Игрок 1</strong><span class="turn-tag">Ход</span></div><div class="player" id="player-1"><span class="symbol o">○</span><strong id="name-1">Игрок 2</strong><span class="turn-tag">Ход</span></div></div>
+        <div id="cell-choice" class="cell-choice hidden"><span>Выберите другую клетку</span><strong id="cell-choice-time" role="timer" aria-live="off" aria-label="Осталось секунд на ответ"></strong><button id="resume-question" class="button quiet" type="button">Вернуться к вопросу</button></div>
         <div class="board-shell"><div class="board" id="board" role="group" aria-label="Поле 30 на 30"></div><div class="board-overlay" id="board-overlay"><span>Начните игру</span></div></div>
         <div class="board-footer"><span id="board-status" role="status">Ожидание игры</span></div>
       </section>
@@ -58,7 +59,7 @@
       <li>Нажмите на свободную клетку. В модальном окне появится вопрос и запустится таймер на 25 секунд. Получите два случайных признака героя Dota 2: роль + атрибут, цвет + роль или цвет + атрибут.</li>
       <li>До конца таймера впишите английское имя или выберите героя из списка. Подойдёт любой ещё не названный герой, соответствующий обоим признакам. Русские псевдонимы поддерживаются для части героев.</li>
       <li>Верный ответ автоматически ставит ваш символ в выбранную клетку. Ошибка, повтор героя или истечение времени оставляют клетку пустой и передают ход сопернику. Каждый распознанный и отправленный герой выбывает до конца партии, даже при неверном ответе.</li>
-      <li>Результат ответа показывается одну секунду, затем ход переходит автоматически. Пока игрок выбирает клетку, таймер не идёт. Выбранную клетку нельзя поменять во время ответа. Следующий вопрос начинается, когда следующий игрок выбирает свою клетку.</li>
+      <li>Результат ответа показывается одну секунду, затем ход переходит автоматически. До первого выбора клетки таймер не идёт. Во время вопроса можно нажать «Сменить клетку» и выбрать другую свободную клетку: вопрос и оставшееся время сохраняются, таймер продолжает идти.</li>
       <li>Атрибуты и роли из OpenDota сверены с данными Valve. Роль — категория вроде «Керри» или «Поддержка», а не позиция 1–5.</li>
       <li>Цвет относится к заметной части стандартного облика без косметики. Допустимые цвета: красный, синий, зелёный, фиолетовый, жёлтый, белый и коричневый. «Тёмный» и «золотой» не используются. У героя может быть несколько подходящих цветов; цветовая разметка остаётся условной.</li>
       <li>Цветовые подсказки генерируются только по явно выраженным цветам. Для неоднозначных обликов используются роль и атрибут, но такие герои тоже могут быть верным ответом на подходящий цветовой вопрос.</li>

@@ -10,6 +10,13 @@ const snapshot = state => ({ player: state.player, turn: state.turn, cell: state
 export function openQuestion(state, heroes, cell, now = Date.now(), random = Math.random) {
   return !state.result && beginQuestion(state, heroes, cell, now, random);
 }
+export function changeQuestionCell(state, heroes, cell, now = Date.now()) {
+  if (state.result || state.phase !== 'quiz') return false;
+  if (now >= state.deadline) { endQuestion(state, heroes, 'timeout', now);return false; }
+  if (!Number.isInteger(cell) || cell < 0 || cell >= state.board.length || state.board[cell]) return false;
+  state.pendingCell = cell;
+  return true;
+}
 export function answerQuestion(state, heroes, answer, now = Date.now()) {
   if (state.result || state.phase !== 'quiz') return { status: 'inactive' };
   const turn = snapshot(state);

@@ -38,6 +38,11 @@ test('HTTP rooms synchronize two authenticated event streams and reject invalid 
     const selected=await post(`/api/rooms/${host.code}/action`,{token:host.token,type:'select',cell:434,matchId,turn});assert.equal(selected.status,200);
     const one=await hostEvents(s=>s.state?.phase==='quiz'),two=await guestEvents(s=>s.state?.phase==='quiz');
     assert.deepEqual(one.state,two.state);assert.equal(one.you,0);assert.equal(two.you,1);
+    const retarget=await post(`/api/rooms/${host.code}/action`,{token:host.token,type:'retarget',cell:435,matchId,turn});
+    assert.equal(retarget.status,200);
+    const movedOne=await hostEvents(s=>s.state?.pendingCell===435),movedTwo=await guestEvents(s=>s.state?.pendingCell===435);
+    assert.deepEqual(movedOne.state,movedTwo.state);assert.deepEqual(movedOne.state.question,one.state.question);
+    assert.equal(movedOne.state.deadline,one.state.deadline);assert.equal(movedOne.state.turn,turn);
     assert(!JSON.stringify(one).includes(host.token));
     assert.equal((await post(`/api/rooms/${host.code}/action`,{token:guest.token,type:'skip',matchId,turn})).status,403);
     assert.equal((await post('/api/rooms',{name:'Друг'},{Origin:'https://other.example'})).status,403);

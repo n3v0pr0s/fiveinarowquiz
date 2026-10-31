@@ -2,7 +2,7 @@ import { heroes } from './heroes.js';
 import { startMatchMusic, stopMatchMusic, fadeOutMatchMusic } from './music.js';
 import { isBotTurn, chooseBotCell, botAnswer } from './bot.js';
 import { SIZE, ROLES, ATTRS, COLORS, newGame, normalize } from './engine.js';
-import { ANSWER_SECONDS, resultRemaining, openQuestion, answerQuestion, endQuestion, acknowledgeResult } from './turn-flow.js';
+import { ANSWER_SECONDS, resultRemaining, openQuestion, changeQuestionCell, answerQuestion, endQuestion, acknowledgeResult } from './turn-flow.js';
 import { RoomClient } from './network.js';
 const $ = selector => document.querySelector(selector);
 // A match lives only in this page's memory; a reload starts at the menu.
@@ -15,6 +15,7 @@ let renderedScreen = null;
 let network = null, roomView = null, connection = 'connecting', clockOffset = 0;
 let disconnectedClock = null;
 let actionBusy = false, menuBusy = false, networkError = '', questionKey = null;
+let changingCell = false;
 const boardCenter=Math.floor((SIZE-1)/2);
 let boardFocusIndex = boardCenter*(SIZE+1);
 let centeredBoard = null;
@@ -22,7 +23,7 @@ const escape = text => String(text).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'
 const playerName = () => state.settings.names[state.player];
 const symbol = player => player === 0 ? '×' : '○';
 const gameNow = () => network && roomView?.pausedAt != null ? roomView.pausedAt : network&&disconnectedClock!==null?disconnectedClock:Date.now() + (network ? clockOffset : 0);
-const canMove = () => Boolean(state?.phase==='ready'&&!state.result&&!isBotTurn(state)&&!actionBusy&&(!network||(connection==='connected'&&roomView?.pausedAt===null&&state.player===roomView.you)));
+const canMove = () => Boolean((state?.phase==='ready'||(state?.phase==='quiz'&&changingCell))&&!state.result&&!isBotTurn(state)&&!actionBusy&&(!network||(connection==='connected'&&roomView?.pausedAt===null&&state.player===roomView.you)));
 function applyRoom(snapshot) {
   const previous=state;
   roomView=snapshot;clockOffset=snapshot.serverNow-Date.now();networkError='';
@@ -55,7 +56,7 @@ async function networkAction(type,fields={}) {
     if(network!==client)return;
     if(response.answerStatus==='unknown'&&$('#input-error')) $('#input-error').textContent='Выберите героя из списка или проверьте имя.';
   } catch(error) {if(network===client){networkError=error.message;if(type==='start'&&!state)stopMatchMusic();}}
-  finally {if(network===client){actionBusy=false;render();}}
+  finally {if(network===client){actionBusy=false;if(type==='retarget')changingCell=false;render();}}
 }
 function renderNetwork() {
   for(const el of document.querySelectorAll('#setup-form input,#setup-form button')) el.disabled=menuBusy;
@@ -63,7 +64,7 @@ function renderNetwork() {
   const message=network&&roomView?.status!=='closed'?(connection!=='connected'?'Соединение потеряно. Переподключаемся…':roomView?.pausedAt!==null?'Соперник отключился. Ждём возвращения…':networkError):'';
   status.textContent=message||'';status.classList.toggle('hidden',!message);
   $('#current-room').classList.toggle('hidden',!network);$('#current-room').textContent=network?roomView?.code||'':'';
-  for(const el of document.querySelectorAll('#answer-form button,#skip-button')) el.disabled=Boolean(network&&(actionBusy||connection!=='connected'||roomView?.pausedAt!==null));
+  for(const el of document.querySelectorAll('#answer-form button,#skip-button,#change-cell')) el.disabled=Boolean(network&&(actionBusy||connection!=='connected'||roomView?.pausedAt!==null));
   if(!network||!roomView)return;
   $('#lobby-code').textContent=roomView.code;
   $('#lobby-players').innerHTML=roomView.players.map((p,i)=>`<div class="lobby-player"><span class="symbol ${i===0?'x':'o'}">${symbol(i)}</span><strong>${p?escape(p.name):'Ждём друга'}</strong><small>${p?(i===roomView.you?'Вы':p.connected?'Подключён':'Не в сети'):''}</small></div>`).join('');
@@ -83,6 +84,7 @@ function expire() {
 }
 function renderBoard() {
   const playing = canMove();
+  $('#cell-choice').classList.toggle('hidden',!changingCell);
   const board = $('#board');
   if(state&&centeredBoard!==state.board) boardFocusIndex=boardCenter*(SIZE+1);
   if(playing&&state.board[boardFocusIndex]) {
@@ -108,7 +110,7 @@ function renderBoard() {
     $(`#player-${i}`).classList.toggle('active',Boolean(state && state.player===i && state.phase!=='finished'));
   }
   $('#board-status').textContent = !state ? 'Ожидание игры' : state.phase==='finished' ? 'Партия завершена' : state.phase==='quiz' ? `Клетка ${Math.floor(state.pendingCell/SIZE)+1}:${state.pendingCell%SIZE+1} · ход ${state.turn}` : `Ход ${state.turn}`;
-  $('#play-hint').textContent = !state?'':state.result?'':state.phase==='quiz'?`${playerName()} отвечает…`:network?(state.player===roomView.you?'Ваш ход':`${playerName()} выбирает клетку`):isBotTurn(state)?'Бот выбирает клетку…':'Выберите клетку';
+  $('#play-hint').textContent = !state?'':state.result?'':state.phase==='quiz'?(changingCell?'Выберите другую клетку':`${playerName()} отвечает…`):network?(state.player===roomView.you?'Ваш ход':`${playerName()} выбирает клетку`):isBotTurn(state)?'Бот выбирает клетку…':'Выберите клетку';
 }
 function renderGamePanel() {
   let panel = $('#game-panel');
@@ -120,14 +122,14 @@ function renderGamePanel() {
     panel.innerHTML = '';
   } else if(state.phase==='quiz') {
     if(network&&state.player!==roomView.you) {questionKey=null;return;}
-    const key=`${state.matchId||'local'}:${state.turn}:${state.pendingCell}`;
+    const key=`${state.matchId||'local'}:${state.turn}`;
     if(questionKey===key&&$('#answer-form')) {updateTimer();return;}
     questionKey=key;
     panel = $('#quiz-content');
-    panel.innerHTML = player+`<div class="quiz-heading"><h2 id="quiz-title">Назовите героя</h2><div class="timer" id="timer" role="timer" aria-live="off" aria-label="Осталось секунд"><strong id="seconds">${Math.max(0,Math.ceil((state.deadline-Date.now())/1000))}</strong><small>с</small></div></div><div class="timer-track"><div id="timer-bar"></div></div><div class="traits">${state.question.traits.map(t=>`<div class="trait"><span class="trait-icon ${t.kind==='color'?'swatch '+t.value:''}">${t.kind==='attr'?'✦':t.kind==='role'?'⚑':''}</span><div><small>${t.kind==='role'?'Роль':t.kind==='attr'?'Атрибут':'Цвет'}</small><strong>${escape((t.kind==='role'?ROLES:t.kind==='attr'?ATTRS:COLORS)[t.value])}</strong></div></div>`).join('<span class="trait-plus">+</span>')}</div><form id="answer-form" autocomplete="off"><label class="answer-label" for="hero-input">Герой</label><div class="search-wrap"><input id="hero-input" placeholder="Имя героя" autocomplete="off" spellcheck="false" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="hero-results"><button id="hero-list-toggle" class="list-toggle" type="button" aria-label="Показать список героев">⌄</button><div class="hero-results hidden" id="hero-results" role="listbox" aria-label="Герои Dota 2"></div></div><p class="input-error" id="input-error" role="alert"></p><button type="submit" class="button primary full">Ответить</button></form><button class="button quiet full skip-button" id="skip-button">Пропустить ход</button>`;
+    panel.innerHTML = player+`<div class="quiz-heading"><h2 id="quiz-title">Назовите героя</h2><div class="timer" id="timer" role="timer" aria-live="off" aria-label="Осталось секунд"><strong id="seconds">${Math.max(0,Math.ceil((state.deadline-Date.now())/1000))}</strong><small>с</small></div></div><div class="timer-track"><div id="timer-bar"></div></div><div class="traits">${state.question.traits.map(t=>`<div class="trait"><span class="trait-icon ${t.kind==='color'?'swatch '+t.value:''}">${t.kind==='attr'?'✦':t.kind==='role'?'⚑':''}</span><div><small>${t.kind==='role'?'Роль':t.kind==='attr'?'Атрибут':'Цвет'}</small><strong>${escape((t.kind==='role'?ROLES:t.kind==='attr'?ATTRS:COLORS)[t.value])}</strong></div></div>`).join('<span class="trait-plus">+</span>')}</div><form id="answer-form" autocomplete="off"><label class="answer-label" for="hero-input">Герой</label><div class="search-wrap"><input id="hero-input" placeholder="Имя героя" autocomplete="off" spellcheck="false" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="hero-results"><button id="hero-list-toggle" class="list-toggle" type="button" aria-label="Показать список героев">⌄</button><div class="hero-results hidden" id="hero-results" role="listbox" aria-label="Герои Dota 2"></div></div><p class="input-error" id="input-error" role="alert"></p><button type="submit" class="button primary full">Ответить</button></form><div class="quiz-secondary-actions"><button class="button quiet" type="button" id="change-cell">Сменить клетку</button><button class="button quiet skip-button" type="button" id="skip-button">Пропустить ход</button></div>`;
     if (isBotTurn(state)) {
       $('#answer-form').outerHTML = '<div class="bot-thinking" role="status"><span class="bot-pulse" aria-hidden="true">· · ·</span><strong>Бот отвечает…</strong></div>';
-      $('#skip-button').remove();
+      $('.quiz-secondary-actions').remove();
       updateTimer();
     } else {
     if(state.question.notice) {
@@ -141,7 +143,6 @@ function renderGamePanel() {
     input.addEventListener('keydown',event=>{
       const options=[...document.querySelectorAll('[data-hero]')];
       if(event.key==='ArrowDown'||event.key==='ArrowUp') {event.preventDefault();if(!options.length||$('#hero-results').classList.contains('hidden')){renderResults(true);return;}const index=options.findIndex(el=>el.dataset.hero===String(selected)); const next=event.key==='ArrowDown'?(index+1)%options.length:(index<=0?options.length-1:index-1); selected=Number(options[next].dataset.hero);options.forEach((el,i)=>{el.classList.toggle('highlighted',i===next);el.setAttribute('aria-selected',i===next);});input.setAttribute('aria-activedescendant',options[next].id);options[next].scrollIntoView({block:'nearest'});}
-      if(event.key==='Escape') closeResults();
       if(event.key==='Enter'&&selected!==null&&!$('#hero-results').classList.contains('hidden')) {event.preventDefault();chooseHero(selected);}
     });
     updateTimer(); requestAnimationFrame(()=>input.focus({preventScroll:true}));
@@ -152,6 +153,7 @@ function renderGamePanel() {
   }
   $('#answer-form')?.addEventListener('submit',event=>{event.preventDefault();startMatchMusic();if(network){void networkAction('answer',{answer:$('#hero-input').value});return;}const result=answerQuestion(state,heroes,$('#hero-input').value);if(result.status==='unknown'){errorMessage='Выберите героя из списка или проверьте имя.';$('#input-error').textContent=errorMessage;return;}render();});
   $('#skip-button')?.addEventListener('click',()=>{startMatchMusic();if(network){void networkAction('skip');return;}endQuestion(state,heroes,'skip');render();});
+  $('#change-cell')?.addEventListener('click',chooseDifferentCell);
   $('#new-game')?.addEventListener('click',returnToMenu);
   if(network&&$('#rematch')) {$('#rematch').disabled=roomView.rematchVotes[roomView.you]||actionBusy||connection!=='connected'||roomView.pausedAt!==null;$('#rematch').textContent=roomView.rematchVotes[roomView.you]?'Ждём соперника…':'Сыграть ещё';}
   $('#rematch')?.addEventListener('click',()=>{if(network){void networkAction('rematch');return;}state=newGame(state.settings);startMatchMusic();render();});
@@ -168,6 +170,7 @@ function continueAfterResult() {
 function renderQuizDialog() {
   clearTimeout(resultTimer);resultTimer=null;
   const dialog=$('#quiz-dialog');
+  if(changingCell) {if(dialog.open)dialog.close();return;}
   if(!state || (!state.result&&(state.phase!=='quiz'||(network&&state.player!==roomView.you)))) {
     if(dialog.open) dialog.close();
     $('#quiz-content').innerHTML='';
@@ -186,11 +189,33 @@ function renderQuizDialog() {
     if(!network)resultTimer=setTimeout(()=>{if(state===current&&state.result===result) continueAfterResult();},resultRemaining(state));
     requestAnimationFrame(()=>$('#quiz-title')?.focus({preventScroll:true}));
   }
-  if(!dialog.open) dialog.showModal();
+  if(!dialog.open) {
+    dialog.showModal();
+    if(!state.result&&!isBotTurn(state))requestAnimationFrame(()=>$('#hero-input')?.focus({preventScroll:true}));
+  }
 }
+$('#resume-question').addEventListener('click',()=>{changingCell=false;render();});
+function chooseDifferentCell() {
+  if(changingCell||state?.phase!=='quiz'||state.result||isBotTurn(state)||(network&&state.player!==roomView.you))return;
+  changingCell=true;closeResults();boardFocusIndex=state.pendingCell;render();
+  requestAnimationFrame(()=>$(`[data-cell="${boardFocusIndex}"]`)?.focus({preventScroll:true}));
+}
+function dismissQuiz() {
+  const results=$('#hero-results');
+  if(results&&!results.classList.contains('hidden')){closeResults();return;}
+  chooseDifferentCell();
+}
+$('#quiz-dialog').addEventListener('keydown',event=>{
+  if(event.key!=='Escape')return;
+  event.preventDefault();event.stopPropagation();
+  if(!event.repeat)dismissQuiz();
+});
 $('#quiz-dialog').addEventListener('cancel',event=>{
   event.preventDefault();
-  if(!state?.result) closeResults();
+  dismissQuiz();
+});
+$('#quiz-dialog').addEventListener('close',()=>{
+  if(!$('#quiz-dialog').open)chooseDifferentCell();
 });
 function chooseHero(id) { const h=heroes.find(h=>h.id===id);if(h){$('#hero-input').value=h.name;selected=null;$('#hero-input').focus();closeResults();} }
 function closeResults() { $('#hero-results')?.classList.add('hidden');$('#hero-input')?.setAttribute('aria-expanded','false');$('#hero-input')?.removeAttribute('aria-activedescendant'); }
@@ -219,6 +244,8 @@ function renderDetails() {
 function updateTimer() {
   if(state?.phase!=='quiz')return;
   const left=Math.max(0,state.deadline-gameNow());
+  $('#cell-choice-time').textContent=`${Math.ceil(left/1000)} с`;
+  $('#cell-choice').classList.toggle('urgent',left<=5000);
   if(network&&state.player!==roomView.you)$('#play-hint').textContent=`${playerName()} отвечает · ${Math.ceil(left/1000)} с`;
   const seconds=$('#seconds');if(!seconds)return;
   seconds.textContent=Math.ceil(left/1000);$('#timer').classList.toggle('urgent',left<=5000);$('#timer-bar').style.width=`${Math.min(100,left/(state.settings.seconds*1000)*100)}%`;
@@ -243,6 +270,7 @@ function scheduleBot() {
 }
 function render() {
   const phase=state?.phase||'setup';
+  if(phase!=='quiz'||state.result||isBotTurn(state)||(network&&state.player!==roomView.you))changingCell=false;
   const screen=network&&roomView?.status!=='active'?'room':!state?'menu':phase==='finished'&&!state.result?'finish':'play';
   if(phase==='finished') fadeOutMatchMusic();
   else if(phase==='setup') stopMatchMusic();
@@ -266,6 +294,8 @@ $('#board').addEventListener('focusin',event=>{
 });
 $('#board').addEventListener('keydown',event=>{
   const cell=event.target.closest('[data-cell]');if(!cell||!canMove())return;
+  if(event.key==='Escape'&&event.repeat){event.preventDefault();return;}
+  if(changingCell&&event.key==='Escape'){event.preventDefault();changingCell=false;render();return;}
   const direction={ArrowUp:[-1,0],ArrowDown:[1,0],ArrowLeft:[0,-1],ArrowRight:[0,1]}[event.key];
   if(!direction)return;event.preventDefault();
   let row=Math.floor(Number(cell.dataset.cell)/SIZE)+direction[0],col=Number(cell.dataset.cell)%SIZE+direction[1];
@@ -277,6 +307,10 @@ $('#board').addEventListener('keydown',event=>{
 $('#board').addEventListener('click',event=>{
   const cell=event.target.closest('[data-cell]');if(!cell||!canMove())return;
   startMatchMusic();
+  if(changingCell) {
+    if(network){void networkAction('retarget',{cell:Number(cell.dataset.cell)});return;}
+    changeQuestionCell(state,heroes,Number(cell.dataset.cell));changingCell=false;render();return;
+  }
   if(network){void networkAction('select',{cell:Number(cell.dataset.cell)});return;}
   if(openQuestion(state,heroes,Number(cell.dataset.cell)))render();
 });

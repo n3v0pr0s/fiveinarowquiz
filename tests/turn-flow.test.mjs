@@ -2,9 +2,32 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { heroes } from '../dist/heroes.js';
 import { newGame, matches } from '../dist/engine.js';
-import { RESULT_DURATION_MS, resultRemaining, openQuestion, answerQuestion, endQuestion, acknowledgeResult } from '../dist/turn-flow.js';
+import { RESULT_DURATION_MS, resultRemaining, openQuestion, changeQuestionCell, answerQuestion, endQuestion, acknowledgeResult } from '../dist/turn-flow.js';
 const setup=()=>newGame({names:['Аня','Бот'],mode:'bot',seconds:30,heroCount:heroes.length});
 const correct=s=>heroes.find(h=>!s.used.includes(h.id)&&matches(h,s.question));
+
+test('Changing cells preserves the question, deadline and bans, and places only the final choice',()=>{
+  const s=setup();assert.equal(changeQuestionCell(s,heroes,0,1000),false);
+  openQuestion(s,heroes,434,1000,()=>0);
+  const question=s.question,deadline=s.deadline;
+  for(const cell of [435,435,436,434,437])assert(changeQuestionCell(s,heroes,cell,15000));
+  assert.equal(s.question,question);assert.equal(s.deadline,deadline);
+  assert.equal(s.turn,1);assert.equal(s.player,0);assert.deepEqual(s.used,[]);
+  assert.equal(s.board.filter(Boolean).length,0);
+  assert.equal(answerQuestion(s,heroes,correct(s).name,16000).status,'correct');
+  assert.equal(s.board[437],'X');assert.equal(s.board[434],null);
+  assert.equal(s.result.cell,437);assert.equal(changeQuestionCell(s,heroes,438,16001),false);
+});
+
+test('Invalid or expired cell changes cannot alter the pending cell or extend a turn',()=>{
+  const s=setup();s.board[435]='O';openQuestion(s,heroes,434,1000);
+  const before=structuredClone(s);
+  for(const cell of [-1,900,1.5,'436',null,435])assert.equal(changeQuestionCell(s,heroes,cell,2000),false);
+  assert.deepEqual(s,before);
+  assert.equal(changeQuestionCell(s,heroes,436,s.deadline),false);
+  assert.equal(s.result.status,'timeout');assert.equal(s.result.cell,434);
+  assert.equal(s.turn,2);assert.equal(s.board[436],null);assert.deepEqual(s.used,[]);
+});
 
 test('Correct result persists across reload and blocks next question during its one-second display',()=>{
   let s=setup();openQuestion(s,heroes,434,1000,()=>0);

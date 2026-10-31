@@ -18,6 +18,34 @@ function fixture() {
 }
 const answer=state=>heroes.find(h=>!state.used.includes(h.id)&&matches(h,state.question)).name;
 
+test('Only the acting player can retarget an active question without restarting it',()=>{
+  const f=fixture();
+  assert.throws(()=>f.act(0,'retarget',{cell:435}),e=>e.status===409);
+  f.room.state.board[433]='O';f.act(0,'select',{cell:434});
+  const question=structuredClone(f.room.state.question),deadline=f.room.state.deadline;
+  f.setTime(10000);
+  assert.throws(()=>f.act(1,'retarget',{cell:435}),e=>e.status===403);
+  for(const cell of [433,-1,900,1.5,'435'])assert.throws(()=>f.act(0,'retarget',{cell}),e=>e.status===409);
+  f.act(0,'retarget',{cell:435});f.act(0,'retarget',{cell:436});
+  assert.deepEqual(f.room.state.question,question);assert.equal(f.room.state.deadline,deadline);
+  assert.equal(f.room.state.pendingCell,436);assert.deepEqual(f.room.state.used,[]);
+  assert.deepEqual(f.received[0].at(-1).state,f.received[1].at(-1).state);
+  f.act(0,'answer',{answer:answer(f.room.state)});
+  assert.equal(f.room.state.board[436],'X');assert.equal(f.room.state.board[434],null);
+  assert.equal(f.room.state.result.cell,436);
+  assert.throws(()=>f.act(1,'retarget',{cell:435}),e=>e.status===409);
+});
+
+test('A late retarget times out and cannot change either player\'s next turn',()=>{
+  const f=fixture();f.act(0,'select',{cell:434});f.setTime(26000);
+  assert.throws(()=>f.act(0,'retarget',{cell:435}));
+  assert.equal(f.room.state.result.status,'timeout');assert.equal(f.room.state.result.cell,434);
+  assert.equal(f.room.state.board.filter(Boolean).length,0);assert.equal(f.room.state.player,1);
+  f.setTime(27000);f.service.tick();f.act(1,'select',{cell:436});
+  assert.throws(()=>f.act(0,'retarget',{cell:437,turn:1}),e=>e.status===403);
+  assert.equal(f.room.state.pendingCell,436);
+});
+
 test('Rooms have separate player credentials, two seats, and snapshots never expose tokens',()=>{
   const f=fixture();
   assert.notEqual(f.host.token,f.guest.token);
